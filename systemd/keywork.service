@@ -1,0 +1,7 @@
+[Unit]
+Description=Coheed and Cambria wallpaper at 21:13
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/keywork
+TimeoutStartSec=300

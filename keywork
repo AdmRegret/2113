@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# At 21:13, show a random Coheed and Cambria wallpaper for one minute, play a clip, then restore
+# Developed with Claude (Anthropic), see README for details
+# Usage  keywork            (KEYWORK_SECONDS=10 keywork to test)
+set -euo pipefail
+
+DIR="${KEYWORK_DIR:-$HOME/Pictures/Wallpapers/keywork}"
+SOUND_DIR="${KEYWORK_SOUND_DIR:-$HOME/Music/keywork}"
+SHOW_SECONDS="${KEYWORK_SECONDS:-60}"
+VOLUME="${KEYWORK_VOLUME:-0.8}"          # 0.0 to 1.0
+RC="${XDG_CONFIG_HOME:-$HOME/.config}/plasma-org.kde.plasma.desktop-appletsrc"
+ALBUMSHIFT_CURRENT="${XDG_CACHE_HOME:-$HOME/.cache}/albumshift/current"
+
+pick=$(find "$DIR" -maxdepth 1 -type f \
+    \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null | shuf -n1 || true)
+[ -n "$pick" ] || { echo "No images found in $DIR" >&2; exit 1; }
+
+sound=$(find "$SOUND_DIR" -maxdepth 1 -type f \
+    \( -iname '*.wav' -o -iname '*.flac' -o -iname '*.ogg' -o -iname '*.oga' -o -iname '*.opus' -o -iname '*.mp3' \) \
+    2>/dev/null | shuf -n1 || true)
+
+# Remember the current wallpaper, from Plasma's config first, then AlbumShift's record
+prev=$(grep -m1 '^Image=' "$RC" 2>/dev/null | sed 's/^Image=//' \
+    | python3 -I -c 'import sys, urllib.parse; u = sys.stdin.read().strip(); print(urllib.parse.unquote(u[7:] if u.startswith("file://") else u))' \
+    || true)
+if [ -z "$prev" ] || [ ! -f "$prev" ]; then
+    prev=$(cat "$ALBUMSHIFT_CURRENT" 2>/dev/null || true)
+fi
+
+# Pause AlbumShift, if installed, so it can't rotate during the minute
+timer_was_active=false
+if systemctl --user is-active --quiet albumshift.timer 2>/dev/null; then
+    timer_was_active=true
+    systemctl --user stop albumshift.timer
+fi
+
+player_pid=""
+sleep_pid=""
+
+play_sound() {
+    local file="$1"
+    if command -v pw-play &>/dev/null; then
+        pw-play --volume "$VOLUME" "$file" &>/dev/null &
+    elif command -v mpv &>/dev/null; then
+        mpv --no-video --really-quiet --volume="$(awk -v v="$VOLUME" 'BEGIN { printf "%d", v * 100 }')" "$file" &>/dev/null &
+    elif command -v paplay &>/dev/null; then
+        paplay "$file" &>/dev/null &
+    else
+        echo "No audio player found (pw-play, mpv, or paplay)" >&2
+        return 0
+    fi
+    player_pid=$!
+}
+
+restore() {
+    for pid in "$player_pid" "$sleep_pid"; do
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    done
+    if [ -n "$prev" ] && [ -f "$prev" ]; then
+        plasma-apply-wallpaperimage "$prev" >/dev/null || true
+    elif command -v albumshift &>/dev/null; then
+        albumshift next >/dev/null || true
+    fi
+    if $timer_was_active; then
+        systemctl --user start albumshift.timer || true
+    fi
+    echo "Wallpaper restored"
+}
+trap restore EXIT
+trap 'exit 143' TERM INT
+
+plasma-apply-wallpaperimage "$pick" >/dev/null
+[ -n "$sound" ] && play_sound "$sound"
+
+echo "21:13, showing $(basename "$pick")${sound:+ with $(basename "$sound")} for ${SHOW_SECONDS}s"
+sleep "$SHOW_SECONDS" &
+sleep_pid=$!
+wait "$sleep_pid"

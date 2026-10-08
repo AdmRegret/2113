@@ -1,0 +1,10 @@
+[Unit]
+Description=Run keywork daily at 21:13
+
+[Timer]
+OnCalendar=*-*-* 21:13:00
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
